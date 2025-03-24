@@ -1,23 +1,15 @@
-import os
 from PyQt5.QtWidgets import (QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
-                             QTreeView, QLabel, QPushButton, QFileDialog,
-                             QScrollArea, QFrame, QMessageBox, QSplitter,
-                             QMenu, QAction, QButtonGroup, QRadioButton,
-                             QSizePolicy, QSlider)  # 添加 QSlider
-from PyQt5.QtCore import Qt, QSize
-from PyQt5.QtGui import QPixmap, QImage, QStandardItemModel, QStandardItem
+                             QLineEdit, QPushButton, QButtonGroup, QScrollArea,
+                             QFrame, QTreeView, QFileDialog, QSplitter)
+from PyQt5.QtCore import Qt, QTimer
+from PyQt5.QtGui import QStandardItemModel
 from core.manga_manager import MangaManager
-from core.manga_model import MangaLoader
-from ui.layouts.flow_layout import FlowLayout
-from utils import manga_logger as log
-from PyQt5.QtWidgets import QInputDialog
-from PyQt5.QtWidgets import QLineEdit
-from PyQt5.QtCore import QTimer
-from styles.style import Win11Style
-from styles.light_style import Win11LightStyle
-from styles.dark_style import Win11DarkStyle
-
-from ui.components.image_label import ImageLabel
+from styles.win_theme_color import Win11Style
+from .components.image_label import ImageLabel
+from .components.page_slider import PageSlider
+from .components.zoom_slider import ZoomSlider
+from .layouts.flow_layout import FlowLayout
+from utils.manga_logger import log
 
 class MangaViewer(QMainWindow):
     def __init__(self, parent=None):
@@ -145,13 +137,6 @@ class MangaViewer(QMainWindow):
         nav_button_layout = QHBoxLayout(nav_button_widget)
         nav_button_layout.setContentsMargins(0, 0, 0, 0)
         nav_button_layout.setSpacing(5)
-        
-        # 添加页面滑动条
-        self.page_slider = QSlider(Qt.Horizontal)
-        self.page_slider.setMinimum(0)
-        self.page_slider.setMaximum(0)
-        self.page_slider.valueChanged.connect(self.on_slider_value_changed)
-        self.page_slider.setFixedWidth(200)
         
         # 使用自定义的 PageSlider
         from ui.components.page_slider import PageSlider
@@ -326,109 +311,37 @@ class MangaViewer(QMainWindow):
         if not self.current_manga:
             return
         
-        try:
-            # 加载当前页面
-            current_image = MangaLoader.get_page_image(self.current_manga, self.current_manga.current_page)
-            if not current_image:
-                self.image_label.setText("无法加载图像")
-                self.update_navigation_buttons()
-                return
-
-            # 获取下一页图像（如果是双页模式且存在下一页）
-            next_image = None
-            if not self.is_single_page_mode and self.current_manga.current_page < self.current_manga.total_pages - 1:
-                next_image = MangaLoader.get_page_image(self.current_manga, self.current_manga.current_page + 1)
-
-            try:
-                # 处理当前页面
-                if current_image.mode != 'RGB':
-                    current_image = current_image.convert('RGB')
-                
-                # 如果是双页模式且有下一页，处理下一页图像
-                if next_image and not self.is_single_page_mode:
-                    if next_image.mode != 'RGB':
-                        next_image = next_image.convert('RGB')
-                    
-                    # 创建合并图像
-                    total_width = current_image.width + (next_image.width if next_image else 0)
-                    max_height = max(current_image.height, next_image.height if next_image else 0)
-                    
-                    # 创建新的RGB图像
-                    from PIL import Image
-                    combined_image = Image.new('RGB', (total_width, max_height))
-                    
-                    # 根据显示方向粘贴图像
-                    if self.next_page_on_right:
-                        combined_image.paste(current_image, (0, 0))
-                        combined_image.paste(next_image, (current_image.width, 0))
-                    else:
-                        combined_image.paste(next_image, (0, 0))
-                        combined_image.paste(current_image, (next_image.width, 0))
-                else:
-                    # 单页模式，直接使用当前页面
-                    combined_image = current_image
-                
-                # 转换为QImage
-                img_data = combined_image.tobytes()
-                qim = QImage(img_data, combined_image.width, combined_image.height, 
-                           combined_image.width * 3, QImage.Format_RGB888)
-                
-                if qim.isNull():
-                    log.error("QImage创建失败")
-                    self.image_label.setText("图像转换失败")
-                    self.update_navigation_buttons()
-                    return
-                
-                # 创建QPixmap并缩放
-                pixmap = QPixmap.fromImage(qim)
-                if pixmap.isNull():
-                    log.error("QPixmap创建失败")
-                    self.image_label.setText("图像转换失败：无法创建QPixmap")
-                    self.update_navigation_buttons()
-                    return
-                
-                # 获取 QScrollArea
-                scroll_area = None
-                parent = self.image_label.parent()
-                while parent:
-                    if isinstance(parent, QScrollArea):
-                        scroll_area = parent
-                        break
-                    parent = parent.parent()
-                
-                if scroll_area:
-                    viewport_size = scroll_area.viewport().size()
-                    scale_w = viewport_size.width() / pixmap.width()
-                    scale_h = viewport_size.height() / pixmap.height()
-                    scale = min(scale_w, scale_h)
-                    
-                    # 应用用户缩放比例
-                    zoom_factor = self.zoom_slider.value() / 100.0
-                    scale *= zoom_factor
-                    
-                    new_width = int(pixmap.width() * scale)
-                    new_height = int(pixmap.height() * scale)
-                    
-                    scaled_pixmap = pixmap.scaled(new_width, new_height, 
-                                                Qt.KeepAspectRatio, 
-                                                Qt.SmoothTransformation)
-                    
-                    self.image_label.setPixmap(scaled_pixmap)
-                    self.image_label.setFixedSize(new_width, new_height)
-                else:
-                    self.image_label.setPixmap(pixmap)
-                
-                self.update_navigation_buttons()
-                
-            except Exception as e:
-                log.error(f"处理图像时发生错误: {str(e)}")
-                self.image_label.setText(f"图像处理错误: {str(e)}")
-                self.update_navigation_buttons()
-                
-        except Exception as e:
-            log.error(f"显示页面时发生错误: {str(e)}")
-            self.image_label.setText(f"显示错误: {str(e)}")
-            self.update_navigation_buttons()
+        current_page = self.current_manga.current_page
+        total_pages = self.current_manga.total_pages
+        
+        # 更新页码滑块
+        self.page_slider.setMaximum(total_pages - 1)
+        self.page_slider.setValue(current_page)
+        
+        # 更新导航按钮状态
+        self.prev_btn.setEnabled(current_page > 0)
+        self.next_btn.setEnabled(current_page < total_pages - 1)
+        
+        # 获取当前页面的图片
+        if self.is_single_page_mode:
+            # 单页模式
+            image = self.manga_manager.get_page_image(self.current_manga, current_page)
+            if image:
+                self.image_label.set_image(image)
+        else:
+            # 双页模式
+            if self.next_page_on_right:
+                left_page = current_page
+                right_page = current_page + 1 if current_page + 1 < total_pages else None
+            else:
+                right_page = current_page
+                left_page = current_page + 1 if current_page + 1 < total_pages else None
+            
+            left_image = self.manga_manager.get_page_image(self.current_manga, left_page) if left_page is not None else None
+            right_image = self.manga_manager.get_page_image(self.current_manga, right_page) if right_page is not None else None
+            
+            if left_image or right_image:
+                self.image_label.set_double_page_images(left_image, right_image)
     
     def change_page(self, direction):
         """统一处理页面变化
@@ -478,109 +391,37 @@ class MangaViewer(QMainWindow):
         if not self.current_manga:
             return
         
-        try:
-            # 加载当前页面
-            current_image = MangaLoader.get_page_image(self.current_manga, self.current_manga.current_page)
-            if not current_image:
-                self.image_label.setText("无法加载图像")
-                self.update_navigation_buttons()
-                return
-
-            # 获取下一页图像（如果是双页模式且存在下一页）
-            next_image = None
-            if not self.is_single_page_mode and self.current_manga.current_page < self.current_manga.total_pages - 1:
-                next_image = MangaLoader.get_page_image(self.current_manga, self.current_manga.current_page + 1)
-
-            try:
-                # 处理当前页面
-                if current_image.mode != 'RGB':
-                    current_image = current_image.convert('RGB')
-                
-                # 如果是双页模式且有下一页，处理下一页图像
-                if next_image and not self.is_single_page_mode:
-                    if next_image.mode != 'RGB':
-                        next_image = next_image.convert('RGB')
-                    
-                    # 创建合并图像
-                    total_width = current_image.width + (next_image.width if next_image else 0)
-                    max_height = max(current_image.height, next_image.height if next_image else 0)
-                    
-                    # 创建新的RGB图像
-                    from PIL import Image
-                    combined_image = Image.new('RGB', (total_width, max_height))
-                    
-                    # 根据显示方向粘贴图像
-                    if self.next_page_on_right:
-                        combined_image.paste(current_image, (0, 0))
-                        combined_image.paste(next_image, (current_image.width, 0))
-                    else:
-                        combined_image.paste(next_image, (0, 0))
-                        combined_image.paste(current_image, (next_image.width, 0))
-                else:
-                    # 单页模式，直接使用当前页面
-                    combined_image = current_image
-                
-                # 转换为QImage
-                img_data = combined_image.tobytes()
-                qim = QImage(img_data, combined_image.width, combined_image.height, 
-                           combined_image.width * 3, QImage.Format_RGB888)
-                
-                if qim.isNull():
-                    log.error("QImage创建失败")
-                    self.image_label.setText("图像转换失败")
-                    self.update_navigation_buttons()
-                    return
-                
-                # 创建QPixmap并缩放
-                pixmap = QPixmap.fromImage(qim)
-                if pixmap.isNull():
-                    log.error("QPixmap创建失败")
-                    self.image_label.setText("图像转换失败：无法创建QPixmap")
-                    self.update_navigation_buttons()
-                    return
-                
-                # 获取 QScrollArea
-                scroll_area = None
-                parent = self.image_label.parent()
-                while parent:
-                    if isinstance(parent, QScrollArea):
-                        scroll_area = parent
-                        break
-                    parent = parent.parent()
-                
-                if scroll_area:
-                    viewport_size = scroll_area.viewport().size()
-                    scale_w = viewport_size.width() / pixmap.width()
-                    scale_h = viewport_size.height() / pixmap.height()
-                    scale = min(scale_w, scale_h)
-                    
-                    # 应用用户缩放比例
-                    zoom_factor = self.zoom_slider.value() / 100.0
-                    scale *= zoom_factor
-                    
-                    new_width = int(pixmap.width() * scale)
-                    new_height = int(pixmap.height() * scale)
-                    
-                    scaled_pixmap = pixmap.scaled(new_width, new_height, 
-                                                Qt.KeepAspectRatio, 
-                                                Qt.SmoothTransformation)
-                    
-                    self.image_label.setPixmap(scaled_pixmap)
-                    self.image_label.setFixedSize(new_width, new_height)
-                else:
-                    self.image_label.setPixmap(pixmap)
-                
-                self.update_navigation_buttons()
-                
-            except Exception as e:
-                log.error(f"处理图像时发生错误: {str(e)}")
-                self.image_label.setText(f"图像处理错误: {str(e)}")
-                self.update_navigation_buttons()
-                
-        except Exception as e:
-            log.error(f"显示页面时发生错误: {str(e)}")
-            self.image_label.setText(f"显示错误: {str(e)}")
-            self.update_navigation_buttons()
+        current_page = self.current_manga.current_page
+        total_pages = self.current_manga.total_pages
+        
+        # 更新页码滑块
+        self.page_slider.setMaximum(total_pages - 1)
+        self.page_slider.setValue(current_page)
+        
+        # 更新导航按钮状态
+        self.prev_btn.setEnabled(current_page > 0)
+        self.next_btn.setEnabled(current_page < total_pages - 1)
+        
+        # 获取当前页面的图片
+        if self.is_single_page_mode:
+            # 单页模式
+            image = self.manga_manager.get_page_image(self.current_manga, current_page)
+            if image:
+                self.image_label.set_image(image)
+        else:
+            # 双页模式
+            if self.next_page_on_right:
+                left_page = current_page
+                right_page = current_page + 1 if current_page + 1 < total_pages else None
+            else:
+                right_page = current_page
+                left_page = current_page + 1 if current_page + 1 < total_pages else None
+            
+            left_image = self.manga_manager.get_page_image(self.current_manga, left_page) if left_page is not None else None
+            right_image = self.manga_manager.get_page_image(self.current_manga, right_page) if right_page is not None else None
+            
+            if left_image or right_image:
+                self.image_label.set_double_page_images(left_image, right_image)
     
     def change_page(self, direction):
         """统一处理页面变化
@@ -622,23 +463,12 @@ class MangaViewer(QMainWindow):
             self.show_current_page()
 
     def update_navigation_buttons(self):
-        has_manga = self.current_manga is not None
-        if has_manga:
-            prev_enabled = self.current_manga.current_page > 0
-            next_enabled = self.current_manga.current_page < self.current_manga.total_pages - 1
-            self.prev_btn.setEnabled(prev_enabled)
-            self.next_btn.setEnabled(next_enabled)
-            
-            # 更新滑动条
-            self.is_updating_slider = True  # 设置标志，防止触发 valueChanged 信号
-            self.page_slider.setMaximum(self.current_manga.total_pages - 1)
-            self.page_slider.setValue(self.current_manga.current_page)
-            self.is_updating_slider = False
-        else:
-            self.prev_btn.setEnabled(False)
-            self.next_btn.setEnabled(False)
-            self.page_slider.setMaximum(0)
-            self.page_slider.setValue(0)
+        enabled = self.current_manga is not None
+        self.prev_btn.setEnabled(enabled)
+        self.next_btn.setEnabled(enabled)
+        self.page_slider.setEnabled(enabled)
+        self.single_page_btn.setEnabled(enabled)
+        self.zoom_slider.setEnabled(enabled)
     
     def show_manga_context_menu(self, position):
         log.info("显示漫画列表右键菜单")
@@ -781,31 +611,17 @@ class MangaViewer(QMainWindow):
             log.info("===============")
 
     def create_tag_type_buttons(self, layout):
-        """动态创建标签类型按钮"""
-        # 获取所有标签
-        all_tags = set()
-        for manga in self.manga_manager.manga_list:
-            all_tags.update(manga.tags)
-        
-        # 提取标签类型（冒号前的部分），排除标题标签
-        tag_types = set()
-        for tag in all_tags:
-            if ':' in tag:
-                tag_type = tag.split(':', 1)[0]
-                if tag_type != '标题':  # 排除标题标签
-                    tag_types.add(tag_type)
-        
-        # 按优先级排序标签类型（最多8个）
-        priority_types = ['会场', '作者', '作品', '平台', '工作室', '汉化', '特殊']
-        sorted_types = sorted(tag_types, key=lambda x: (
-            priority_types.index(x) if x in priority_types else len(priority_types)
-        ))[:8]
-        
-        # 创建按钮
-        for i, tag_type in enumerate(sorted_types):
-            btn = QRadioButton(tag_type)
-            if i == 0:  # 默认选中第一个
-                btn.setChecked(True)
+        if not self.manga_manager:
+            return
+        # 清除现有按钮
+        for button in self.tag_type_group.buttons():
+            self.tag_type_group.removeButton(button)
+            button.deleteLater()
+
+        # 创建新按钮
+        for tag_type in self.manga_manager.get_tag_types():
+            btn = QPushButton(tag_type)
+            btn.setCheckable(True)
             self.tag_type_group.addButton(btn)
             layout.addWidget(btn)
 
