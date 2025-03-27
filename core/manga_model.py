@@ -31,7 +31,7 @@ class MangaInfo:
         # 解析作者和团队 [团队 (作者)]
         group_author_match = re.search(r'\[(.*?) \((.*?)\)\]', original_title)
         if group_author_match:
-            self.tags.add(f'工作室:{group_author_match.group(1)}')
+            self.tags.add(f'组:{group_author_match.group(1)}')
             self.tags.add(f'作者:{group_author_match.group(2)}')
             original_title = original_title.replace(group_author_match.group(0), '', 1).strip()
         else:
@@ -68,10 +68,10 @@ class MangaInfo:
             elif any(keyword in tag_content for keyword in ['中国翻訳', '中国翻译', '中國翻譯', '中國翻訳']):
                 self.tags.add('汉化:中国翻译')
             elif any(keyword in tag_content for keyword in ['無修正', '无修正', '無修']):
-                self.tags.add('特殊:无修正')
+                self.tags.add('其他:无修正')
             else:
                 # 未知类型的标签
-                self.tags.add(f'特殊:{tag_content}')
+                self.tags.add(f'其他:{tag_content}')
             
             # 从标题中移除这个标签
             original_title = original_title.replace(f'[{tag_content}]', '', 1).strip()
@@ -106,31 +106,35 @@ class MangaLoader:
         if not os.path.exists(file_path) or not file_path.lower().endswith('.zip'):
             log.warning(f"文件不存在或不是ZIP文件: {file_path}")
             return None
-        
+
         manga = MangaInfo(file_path)
         manga.file_path = file_path
-        
+
         try:
             with ZipFile(file_path, 'r') as zip_file:
                 all_files = zip_file.namelist()
-                image_files = [f for f in all_files 
-                              if f.lower().endswith(('.jpg', '.jpeg', '.png', '.gif', '.webp'))]
-                
+                image_files = [f for f in all_files
+                                 if f.lower().endswith(('.jpg', '.jpeg', '.png', '.gif', '.webp'))]
+
                 if not image_files and all_files:
                     log.warning(f"未找到图片文件: {file_path}")
                     return None
-                
+
                 image_files.sort()
                 manga.total_pages = len(image_files)
-                
+
                 if not manga.is_valid:
-                    log.warning(f"无效的漫画文件（缺少作者或标题）: {file_path}")
-                    return None
-                    
+                    # 如果验证不通过，但包含图片，则设置默认标题和添加未知标签
+                    if image_files:
+                        title_from_filename = os.path.splitext(os.path.basename(file_path))[0]
+                        manga.tags.add(f'标题:{title_from_filename}')
+                        manga.tags.add('其他:未知')
+                        manga.is_valid = True # 标记为有效
+
         except Exception as e:
             log.error(f"加载漫画时发生错误: {str(e)}")
             return None
-        
+
         return manga
     
     @staticmethod
@@ -143,7 +147,7 @@ class MangaLoader:
             with ZipFile(manga.file_path, 'r') as zip_file:
                 # 获取所有文件
                 all_files = zip_file.namelist()
-                log.debug(f"ZIP文件中包含 {len(all_files)} 个文件")
+                # log.debug(f"ZIP文件中包含 {len(all_files)} 个文件")
                 
                 # 获取所有图片文件，包括子目录中的图片
                 image_files = [f for f in all_files 
@@ -161,10 +165,10 @@ class MangaLoader:
                 
                 if 0 <= page_index < len(image_files):
                     file_name = image_files[page_index]
-                    log.debug(f"尝试读取图像文件: {file_name}")
+                    # log.debug(f"尝试读取图像文件: {file_name}")
                     try:
                         image_data = zip_file.read(file_name)
-                        log.debug(f"成功读取图像数据，大小: {len(image_data)} 字节")
+                        # log.debug(f"成功读取图像数据，大小: {len(image_data)} 字节")
                     except Exception as zip_error:
                         log.error(f"从ZIP文件读取图像数据时发生错误: {str(zip_error)}")
                         return None
@@ -176,11 +180,11 @@ class MangaLoader:
                             log.error(f"图像数据为空: {file_name}")
                             return None
                             
-                        log.debug(f"创建BytesIO对象，数据大小: {len(image_data)} 字节")
+                        # log.debug(f"创建BytesIO对象，数据大小: {len(image_data)} 字节")
                         image_buffer = io.BytesIO(image_data)
                         
                         # 尝试打开图像
-                        log.debug(f"尝试使用PIL打开图像: {file_name}")
+                        # log.debug(f"尝试使用PIL打开图像: {file_name}")
                         image = Image.open(image_buffer)
                         
                         # 立即加载图像数据，确保图像有效
@@ -191,7 +195,7 @@ class MangaLoader:
                             log.error(f"图像缺少必要属性: {file_name}")
                             return None
                             
-                        log.debug(f"成功加载图像: {file_name}, 大小: {image.width}x{image.height}, 模式: {image.mode}")
+                        # log.debug(f"成功加载图像: {file_name}, 大小: {image.width}x{image.height}, 模式: {image.mode}")
                         return image
                     except Exception as img_error:
                         log.error(f"无法解析图像数据: {str(img_error)}, 文件: {file_name}")
