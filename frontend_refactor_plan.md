@@ -1,272 +1,67 @@
-# 缓存管理增强计划 V3.0 (最终版)
+# 漫画查看器前端重构计划
 
-## 1. 计划概述
+## 1. 背景与动机
 
-本计划是对缓存管理模块的一次全方位功能增强和可用性提升。它基于之前的讨论，并整合了所有新的需求，旨在提供一个最终的、可执行的重构蓝图。
+当前漫画查看器（`viewer.html`）功能完善，但在代码组织上采用了传统的“单文件”模式。所有的HTML结构、CSS样式和JavaScript逻辑高度集中在一个文件中。
 
-此计划包含三个核心任务：
-1.  **持久化翻译缓存分组**: 从根本上解决缓存条目过多的问题。
-2.  **翻译缓存敏感内容筛选**: 提供快速查看敏感内容的能力。
-3.  **漫画列表分类展示**: 方便用户识别和管理可能非漫画的内容。
+经过分析，我们识别出以下几个核心问题：
 
----
+- **可维护性差：** `viewer.html` 文件过大，尤其是其内联的 `<script>` 标签包含了近700行业务逻辑，导致后续修改、排查问题变得困难和低效。
+- **代码重复：** Vue的 `setup` 函数中存在逻辑重复，增加了代码的冗余度和潜在的出错点。
+- **用户体验瑕疵：** 应用在初次加载时，会出现一个短暂的、与深色主题不协调的白色“加载中”提示，影响了视觉上的整体感和流畅性。
 
-## 2. 任务一: 持久化翻译缓存分组 (后端聚合)
+本次重构的**核心动机**是在**不引入任何额外构建工具或复杂工作流**的前提下，通过优化代码结构和解决现有问题，提升项目的代码质量、可维护性和用户体验。
 
-**目标**: 改变 `PersistentTranslationCacheHandler` 的行为，使其返回按`(漫画, 翻译引擎)`聚合后的数据，而不是原始的、按页的条目。
+## 2. 重构核心原则
 
-### 2.1 后端修改 (`web/api/cache.py`)
+- **零构建 (Zero-Build):** **不**引入Vite、Webpack等任何需要“编译/打包”步骤的工具。所有重构后的代码必须能直接在现代浏览器中运行。
+- **保持简洁 (Maintain Simplicity):** 维持项目“直接编辑、刷新查看”的核心工作流程。最终的文件结构和开发体验必须保持简单、直观。
+- **关注体验 (Focus on UX):** 优先解决具体的用户体验问题，为用户（即开发者本人）提供一个更稳定、更无缝的应用。
 
-**文件**: `web/api/cache.py`  
-**定位**: `PersistentTranslationCacheHandler` 类
+## 3. 具体实施方案
 
-#### 步骤 2.1.1: 重写 `get_entries` 方法
+### 任务一：JavaScript 逻辑模块化拆分
 
-将 `get_entries` 方法的实现替换为以下聚合逻辑。这会将原始数据在后端处理成对用户友好的摘要信息。
+- **现状：** 业务逻辑全部内联在 `viewer.html` 的 `<script>` 标签中。
+- **方案：**
+    1.  在 `web/static/js/` 目录下创建新的JavaScript文件，用于承载不同的功能模块。建议结构如下：
+        - `viewer/state.js`: 负责定义和导出所有共享的响应式状态（如 `mangaInfo`, `currentPage`）。
+        - `viewer/controls.js`: 负责处理所有用户交互逻辑（如按钮点击、滑块拖动、键盘事件等）。
+        - `viewer/core.js`: 作为主入口，负责初始化Vue实例，整合状态和控制逻辑，并挂载应用。
+    2.  在 `viewer.html` 的末尾，移除原有的内联脚本，并使用 `<script type="module">` 来加载 `viewer/core.js`。
+- **预期收益：**
+    - `viewer.html` 变得干净，只承载HTML结构。
+    - JavaScript代码实现高内聚、低耦合，每个文件的职责单一，易于理解和修改。
+    - 从根本上消除代码重复问题。
 
-```python
-# 在 PersistentTranslationCacheHandler 类中
-async def get_entries(self, page: int, page_size: int, search: Optional[str] = None) -> Dict[str, Any]:
-    """获取持久化翻译缓存条目，并按（漫画路径, 翻译器类型）聚合"""
-    try:
-        # 1. 从管理器获取所有原始、未分组的条目
-        all_raw_entries = self.manager.get_all_entries_for_display()
+### 任务二：解决初始加载闪烁问题
 
-        # 2. 按 (manga_path, translator_type) 进行分组
-        grouped_entries = {}
-        for entry in all_raw_entries:
-            group_key = (entry.get("manga_path"), entry.get("translator_type"))
-            if not all(group_key):
-                continue
+- **现状：** `v-if="isLoading"` 的逻辑导致一个白色的`div`元素在数据加载时短暂显示，与深色主题冲突。
+- **方案：**
+    1.  移除 `v-if="isLoading"` 指令以及相关的 `loading-container` 元素。
+    2.  确保图片显示区域（`.image-container`）始终存在于DOM中。
+    3.  为其设置一个与应用背景色一致的默认背景，或一个简单的深色占位符。这样，即使用户的网络状况极差，看到的也是一个和谐的占位背景，而不是刺眼的白屏。
+- **预期收益：**
+    - 提升应用的“感知性能”，启动过程视觉上更平滑、无缝。
+    - 增强UI的一致性和专业感。
 
-            if group_key not in grouped_entries:
-                grouped_entries[group_key] = {
-                    "manga_path": entry.get("manga_path"),
-                    "manga_name": entry.get("manga_name"),
-                    "translator_type": entry.get("translator_type"),
-                    "page_indices": set(), # 使用集合以避免重复并提高效率
-                    "last_accessed": entry.get("last_accessed", "1970-01-01T00:00:00")
-                }
-            
-            page_index = entry.get("page_index")
-            if page_index is not None:
-                grouped_entries[group_key]["page_indices"].add(page_index)
-            
-            # 更新为最新的访问时间
-            current_last_accessed = entry.get("last_accessed", "1970-01-01T00:00:00")
-            if current_last_accessed > grouped_entries[group_key]["last_accessed"]:
-                grouped_entries[group_key]["last_accessed"] = current_last_accessed
+### 任务三：CSS 样式优化
 
-        # 3. 将分组后的数据转换为最终的列表格式
-        final_list = []
-        for (manga_path, translator_type), group_data in grouped_entries.items():
-            page_indices = sorted(list(group_data["page_indices"]))
-            
-            # 创建一个唯一的、稳定的复合键，用于前端操作
-            composite_key = f"{manga_path}:::{translator_type}"
+- **现状：** `viewer.css` 中存在对 `!important` 的过度依赖，可能导致样式覆盖困难和不可预测的渲染问题。
+- **方案：**
+    1.  系统性地审查 `viewer.css` 文件。
+    2.  通过编写更具体、更高优先级的CSS选择器来替代 `!important`。例如，用 `#app .left-sidebar .nav-btn` 替代 `.nav-btn`。
+- **预期收益：**
+    - CSS代码更健壮、可预测，未来的样式调整会更简单、更安全。
 
-            final_list.append({
-                "key": composite_key,
-                "manga_path": manga_path,
-                "manga_name": group_data["manga_name"],
-                "translator_type": translator_type,
-                "cached_pages_count": len(page_indices),
-                "first_page": page_indices[0] if page_indices else -1,
-                "last_page": page_indices[-1] if page_indices else -1,
-                "last_accessed": group_data["last_accessed"],
-                "value_preview": f"漫画: {group_data['manga_name']} ({translator_type})"
-            })
-        
-        # 4. 对聚合后的列表进行搜索过滤
-        if search:
-            query = search.lower()
-            final_list = [
-                entry for entry in final_list 
-                if query in entry["manga_name"].lower() or query in entry["manga_path"].lower()
-            ]
+## 4. 注意事项与潜在风险
 
-        # 5. 对最终列表进行分页
-        total = len(final_list)
-        start = (page - 1) * page_size
-        end = start + page_size
-        paginated_list = final_list[start:end]
+- **浏览器兼容性：** 本方案依赖浏览器原生的ES Modules (`<script type="module">`) 支持。这要求使用现代浏览器（如Chrome 61+, Firefox 60+, Safari 10.1+）。考虑到这是个人本地项目，此风险基本可忽略。
+- **模块间通信：** 在JS文件拆分后，需要建立清晰的数据流。
+    - **推荐模式：** 由 `state.js` 统一导出所有共享状态，由 `controls.js` 导出所有方法。`core.js` 负责导入这两者并注入到Vue实例中。应避免模块间的循环依赖。
+- **调试方式变化：** 之前只需要在浏览器的开发者工具中查看一个内联脚本，现在则需要根据功能在“源代码”面板中查找对应的JS文件进行断点调试。这需要短暂的适应。
+- **避免全局污染：** 拆分后的JS模块应严格使用 `import`/`export` 语法，避免将变量或函数意外地暴露到全局 `window` 对象上。
 
-        return {
-            "entries": paginated_list,
-            "total": total,
-            "page": page,
-            "page_size": page_size,
-            "total_pages": (total + page_size - 1) // page_size if page_size > 0 else 0
-        }
+## 5. 总结
 
-    except Exception as e:
-        self.log.error(f"聚合获取持久化翻译缓存条目失败: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"获取缓存条目失败: {e}")
-```
-
-#### 步骤 2.1.2: 修改 `delete_entry` 方法
-
-修改此方法以正确解析前端传来的复合键，并调用一个更精确的核心删除方法。
-
-**重要提示**: 此步骤**需要您在 `core.persistent_translation_cache.PersistentTranslationCache` 中实现一个名为 `delete_by_manga_and_translator` 的新方法**，该方法接受 `manga_path` 和 `translator_type` 作为参数。
-
-```python
-# 在 PersistentTranslationCacheHandler 类中
-async def delete_entry(self, key: str) -> Dict[str, Any]:
-    """删除持久化翻译缓存中的一个聚合条目"""
-    try:
-        if ":::" not in key:
-            raise ValueError("无效的缓存键格式，无法解析。")
-        manga_path, translator_type = key.split(":::", 1)
-
-        # 检查核心管理器中是否存在所需的方法
-        if not hasattr(self.manager, 'delete_by_manga_and_translator'):
-            self.log.error("核心缓存管理器 'PersistentTranslationCache' 缺少 'delete_by_manga_and_translator' 方法。")
-            raise NotImplementedError("后端核心功能不支持按翻译引擎精确删除。")
-
-        # 调用核心删除方法
-        deleted_count = self.manager.delete_by_manga_and_translator(manga_path, translator_type)
-        return {"success": True, "message": f"成功删除 {deleted_count} 个相关缓存条目。"}
-
-    except (ValueError, NotImplementedError) as e:
-        self.log.warning(f"删除操作失败 (客户端错误): {e}")
-        raise HTTPException(status_code=400, detail=str(e))
-    except Exception as e:
-        self.log.error(f"删除持久化翻译缓存聚合条目时发生意外错误: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"服务器内部错误，删除失败: {e}")
-```
-
----
-
-## 3. 任务二 & 三: UI 筛选功能 (前端实现)
-
-**目标**: 在“翻译缓存”和“漫画列表”视图中，增加开关以实现客户端的快速内容筛选。
-
-### 3.1 JavaScript 修改 (`web/static/js/cache-management.js`)
-
-**文件**: `web/static/js/cache-management.js`
-
-#### 步骤 3.1.1: 增加新的状态变量
-
-在 `data` 对象中（通常由 `Vue.createApp` 的 `data()` 方法返回），增加两个用于控制筛选的布尔值。
-
-```javascript
-// 在 data() 返回的对象中
-showOnlySensitive: false, // 用于翻译缓存
-showOnlyUnlikelyManga: false, // 用于漫画列表
-```
-
-#### 步骤 3.1.2: 增强 `filterCacheEntries` 函数
-
-这是实现所有前端筛选的核心。用以下版本替换现有的 `filterCacheEntries` 函数。
-
-```javascript
-filterCacheEntries() {
-    let entries = this.cacheEntries; // 从完整列表开始
-
-    // === 阶段1: 应用特定类型的过滤器 ===
-
-    // -> 翻译缓存: 仅显示敏感内容
-    if (this.selectedCacheType === 'translation' && this.showOnlySensitive) {
-        entries = entries.filter(entry => entry.is_sensitive === true);
-    }
-
-    // -> 漫画列表: 仅显示可能非漫画项
-    if (this.selectedCacheType === 'manga_list' && this.showOnlyUnlikelyManga) {
-        // 重要: is_likely_manga 必须明确为 false 才被视为“非漫画”。
-        // 这将自动忽略值为 null 或 undefined 的“未分析”条目。
-        entries = entries.filter(entry => entry.is_likely_manga === false);
-    }
-
-    // === 阶段2: 应用全局搜索查询 ===
-    if (this.cacheSearchQuery) {
-        const query = this.cacheSearchQuery.toLowerCase();
-        entries = entries.filter(entry =>
-            (entry.key && String(entry.key).toLowerCase().includes(query)) ||
-            (entry.value_preview && String(entry.value_preview).toLowerCase().includes(query))
-        );
-    }
-
-    this.filteredCacheEntries = entries;
-},
-```
-
-#### 步骤 3.1.3: 确保状态重置
-
-在切换缓存类型时，应重置筛选开关的状态，以避免在不适用的类型上保留筛选。
-
-```javascript
-// 修改 selectCacheType 函数
-async selectCacheType(cacheType) {
-    this.selectedCacheType = cacheType;
-    this.currentPage = 1;
-    this.cacheSearchQuery = '';
-
-    // 新增：重置筛选状态
-    this.showOnlySensitive = false;
-    this.showOnlyUnlikelyManga = false;
-    
-    await this.loadCacheEntries();
-},
-```
-
-### 3.2 HTML 视图修改 (`web/templates/components/pages/cache-management.html`)
-
-**文件**: `web/templates/components/pages/cache-management.html`
-
-#### 步骤 3.2.1: 为聚合后的持久化缓存添加专用列
-
-```html
-<!-- 在 thead 中 -->
-<template v-if="selectedCacheType === 'persistent_translation'">
-    <th class="cache-table-header-cell">翻译引擎</th>
-    <th class="cache-table-header-cell">缓存页数</th>
-    <th class="cache-table-header-cell">页面范围</th>
-    <th class="cache-table-header-cell">最后访问</th>
-</template>
-
-<!-- 在 tbody 的 v-for 中 -->
-<template v-if="selectedCacheType === 'persistent_translation'">
-    <td class="cache-table-cell">
-        <el-tag size="small" type="success">{{ entry.translator_type }}</el-tag>
-    </td>
-    <td class="cache-table-cell">{{ entry.cached_pages_count }}</td>
-    <td class="cache-table-cell">
-        <span v-if="entry.cached_pages_count > 0">
-            第{{ entry.first_page + 1 }} - {{ entry.last_page + 1 }}页
-        </span>
-        <span v-else>无</span>
-    </td>
-    <td class="cache-table-cell">{{ formatDateTime(entry.last_accessed) }}</td>
-</template>
-```
-
-#### 步骤 3.2.2: 在操作栏添加筛选开关
-
-在 `<div class="md-card-actions">` 内，添加以下 `<template>` 块。
-
-```html
-<!-- 用于“翻译”缓存的筛选开关 -->
-<template v-if="selectedCacheType === 'translation'">
-    <el-switch
-        v-model="showOnlySensitive"
-        @change="filterCacheEntries"
-        active-text="仅显示敏感内容"
-        style="margin-left: 16px; --el-switch-on-color: #E6A23C;">
-    </el-switch>
-</template>
-
-<!-- 用于“漫画列表”的筛选开关 -->
-<template v-if="selectedCacheType === 'manga_list'">
-    <el-switch
-        v-model="showOnlyUnlikelyManga"
-        @change="filterCacheEntries"
-        active-text="仅显示可能非漫画项"
-        style="margin-left: 16px; --el-switch-on-color: #F56C6C;">
-    </el-switch>
-</template>
-```
-**原因**: 使用 `el-switch` 并将其 `@change` 事件绑定到 `filterCacheEntries` 方法，提供了一个即时反馈的用户界面。当用户拨动开关时，表格内容会立即根据新的筛选条件重新渲染，体验流畅。
-
----
-此 V3.0 计划现已完整，覆盖了后端数据处理的优化和前端用户体验的增强，是您进行下一步开发的坚实基础。
+本计划在完全尊重项目维护者对**简洁性**的核心要求基础上，提供了一套切实可行的优化路径。它通过模块化、解决具体UI问题和优化代码风格，能够在不增加任何工程复杂度的情况下，显著提升项目的健康度和未来可维护性。
